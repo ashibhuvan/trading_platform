@@ -1,19 +1,20 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
+import CandlestickChart from './components/CandlestickChart';
 
 // Grid configuration
-const GRID_COLS = 12;
-const GRID_ROWS = 8;
-const CELL_SIZE = 80;
 const GAP = 4;
+
+// Available symbols
+const SYMBOLS = ['ES', 'NQ', 'CL', 'GC', 'EURUSD', 'GBPUSD', 'AAPL', 'MSFT', 'TSLA', 'BTC'];
 
 // Component types that can be added
 const COMPONENT_TYPES = {
-  PRICE_LADDER: { name: 'Price Ladder', defaultW: 2, defaultH: 4, color: '#1a1a2e' },
-  CHART: { name: 'Chart', defaultW: 4, defaultH: 3, color: '#16213e' },
-  POSITIONS: { name: 'Positions', defaultW: 3, defaultH: 2, color: '#1a1a2e' },
-  ORDER_TICKET: { name: 'Order Ticket', defaultW: 2, defaultH: 2, color: '#0f3460' },
-  WATCHLIST: { name: 'Watchlist', defaultW: 2, defaultH: 3, color: '#1a1a2e' },
-  NEWS: { name: 'News', defaultW: 3, defaultH: 2, color: '#16213e' },
+  CHART: { name: 'Chart', defaultW: 6, defaultH: 5, color: '#0a0a0f' },
+  PRICE_LADDER: { name: 'Price Ladder', defaultW: 2, defaultH: 5, color: '#1a1a2e' },
+  POSITIONS: { name: 'Positions', defaultW: 4, defaultH: 2, color: '#1a1a2e' },
+  ORDER_TICKET: { name: 'Order Ticket', defaultW: 2, defaultH: 3, color: '#0f3460' },
+  WATCHLIST: { name: 'Watchlist', defaultW: 2, defaultH: 4, color: '#1a1a2e' },
+  NEWS: { name: 'News', defaultW: 4, defaultH: 3, color: '#16213e' },
 };
 
 // Check if a position collides with existing components
@@ -33,9 +34,9 @@ const checkCollision = (components, newComp, excludeId = null) => {
 };
 
 // Find next available position for a component
-const findAvailablePosition = (components, w, h) => {
-  for (let y = 0; y <= GRID_ROWS - h; y++) {
-    for (let x = 0; x <= GRID_COLS - w; x++) {
+const findAvailablePosition = (components, w, h, gridCols, gridRows) => {
+  for (let y = 0; y <= gridRows - h; y++) {
+    for (let x = 0; x <= gridCols - w; x++) {
       const testComp = { x, y, w, h };
       if (!checkCollision(components, testComp)) {
         return { x, y };
@@ -46,21 +47,43 @@ const findAvailablePosition = (components, w, h) => {
 };
 
 // Grid cell component
-const GridCell = ({ x, y, onDrop, isHighlighted }) => (
+const GridCell = ({ x, y, cellSize }) => (
   <div
     style={{
       position: 'absolute',
-      left: x * (CELL_SIZE + GAP),
-      top: y * (CELL_SIZE + GAP),
-      width: CELL_SIZE,
-      height: CELL_SIZE,
-      backgroundColor: isHighlighted ? 'rgba(74, 144, 226, 0.3)' : 'rgba(255,255,255,0.03)',
-      border: '1px solid rgba(255,255,255,0.05)',
+      left: x * (cellSize + GAP),
+      top: y * (cellSize + GAP),
+      width: cellSize,
+      height: cellSize,
+      backgroundColor: 'rgba(255,255,255,0.02)',
+      border: '1px solid rgba(255,255,255,0.04)',
       borderRadius: 2,
     }}
-    onDragOver={(e) => e.preventDefault()}
-    onDrop={() => onDrop(x, y)}
   />
+);
+
+// Symbol selector dropdown
+const SymbolSelector = ({ value, onChange }) => (
+  <select
+    value={value}
+    onChange={(e) => onChange(e.target.value)}
+    onClick={(e) => e.stopPropagation()}
+    onMouseDown={(e) => e.stopPropagation()}
+    style={{
+      background: 'rgba(255,255,255,0.1)',
+      border: '1px solid rgba(255,255,255,0.2)',
+      borderRadius: 3,
+      color: '#fff',
+      fontSize: 11,
+      padding: '2px 6px',
+      cursor: 'pointer',
+      outline: 'none',
+    }}
+  >
+    {SYMBOLS.map(sym => (
+      <option key={sym} value={sym} style={{ background: '#1a1a2e' }}>{sym}</option>
+    ))}
+  </select>
 );
 
 // Draggable/Resizable Component
@@ -69,8 +92,12 @@ const GridComponent = ({
   onMove, 
   onResize, 
   onRemove,
+  onUpdateSymbol,
   isSelected,
-  onSelect 
+  onSelect,
+  gridCols,
+  gridRows,
+  cellSize,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
@@ -79,10 +106,10 @@ const GridComponent = ({
 
   const style = {
     position: 'absolute',
-    left: component.x * (CELL_SIZE + GAP),
-    top: component.y * (CELL_SIZE + GAP),
-    width: component.w * CELL_SIZE + (component.w - 1) * GAP,
-    height: component.h * CELL_SIZE + (component.h - 1) * GAP,
+    left: component.x * (cellSize + GAP),
+    top: component.y * (cellSize + GAP),
+    width: component.w * cellSize + (component.w - 1) * GAP,
+    height: component.h * cellSize + (component.h - 1) * GAP,
     backgroundColor: COMPONENT_TYPES[component.type].color,
     border: isSelected ? '2px solid #4a90e2' : '1px solid rgba(255,255,255,0.1)',
     borderRadius: 4,
@@ -92,11 +119,11 @@ const GridComponent = ({
     flexDirection: 'column',
     overflow: 'hidden',
     boxShadow: isSelected ? '0 0 20px rgba(74, 144, 226, 0.3)' : '0 4px 12px rgba(0,0,0,0.3)',
-    transition: isDragging || isResizing ? 'none' : 'all 0.2s ease',
+    transition: isDragging || isResizing ? 'none' : 'all 0.15s ease',
   };
 
   const handleMouseDown = (e) => {
-    if (e.target.classList.contains('resize-handle')) return;
+    if (e.target.closest('.no-drag')) return;
     setIsDragging(true);
     onSelect(component.id);
     const rect = compRef.current.getBoundingClientRect();
@@ -112,23 +139,23 @@ const GridComponent = ({
     const gridContainer = compRef.current.parentElement;
     const gridRect = gridContainer.getBoundingClientRect();
     
-    const newX = Math.round((e.clientX - gridRect.left - dragOffset.x) / (CELL_SIZE + GAP));
-    const newY = Math.round((e.clientY - gridRect.top - dragOffset.y) / (CELL_SIZE + GAP));
+    const newX = Math.round((e.clientX - gridRect.left - dragOffset.x) / (cellSize + GAP));
+    const newY = Math.round((e.clientY - gridRect.top - dragOffset.y) / (cellSize + GAP));
     
-    const clampedX = Math.max(0, Math.min(GRID_COLS - component.w, newX));
-    const clampedY = Math.max(0, Math.min(GRID_ROWS - component.h, newY));
+    const clampedX = Math.max(0, Math.min(gridCols - component.w, newX));
+    const clampedY = Math.max(0, Math.min(gridRows - component.h, newY));
     
     if (clampedX !== component.x || clampedY !== component.y) {
       onMove(component.id, clampedX, clampedY);
     }
-  }, [isDragging, dragOffset, component, onMove]);
+  }, [isDragging, dragOffset, component, onMove, gridCols, gridRows, cellSize]);
 
   const handleMouseUp = () => {
     setIsDragging(false);
     setIsResizing(false);
   };
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (isDragging) {
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
@@ -153,8 +180,8 @@ const GridComponent = ({
       const deltaX = moveEvent.clientX - startX;
       const deltaY = moveEvent.clientY - startY;
       
-      const newW = Math.max(1, Math.min(GRID_COLS - component.x, startW + Math.round(deltaX / (CELL_SIZE + GAP))));
-      const newH = Math.max(1, Math.min(GRID_ROWS - component.y, startH + Math.round(deltaY / (CELL_SIZE + GAP))));
+      const newW = Math.max(2, Math.min(gridCols - component.x, startW + Math.round(deltaX / (cellSize + GAP))));
+      const newH = Math.max(2, Math.min(gridRows - component.y, startH + Math.round(deltaY / (cellSize + GAP))));
       
       if (newW !== component.w || newH !== component.h) {
         onResize(component.id, newW, newH);
@@ -171,59 +198,84 @@ const GridComponent = ({
     window.addEventListener('mouseup', handleResizeUp);
   };
 
+  const contentWidth = component.w * cellSize + (component.w - 1) * GAP - 2;
+  const contentHeight = component.h * cellSize + (component.h - 1) * GAP - 36;
+
   return (
     <div ref={compRef} style={style} onMouseDown={handleMouseDown}>
       {/* Header */}
       <div style={{
-        padding: '8px 12px',
+        padding: '6px 10px',
         borderBottom: '1px solid rgba(255,255,255,0.1)',
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
-        backgroundColor: 'rgba(0,0,0,0.2)',
+        backgroundColor: 'rgba(0,0,0,0.3)',
+        minHeight: 32,
       }}>
-        <span style={{ color: '#fff', fontSize: 12, fontWeight: 600 }}>
-          {COMPONENT_TYPES[component.type].name}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: 10, textTransform: 'uppercase' }}>
+            {COMPONENT_TYPES[component.type].name}
+          </span>
+          {component.type === 'CHART' && (
+            <div className="no-drag">
+              <SymbolSelector 
+                value={component.symbol || 'ES'} 
+                onChange={(sym) => onUpdateSymbol(component.id, sym)}
+              />
+            </div>
+          )}
+        </div>
         <button
           onClick={(e) => { e.stopPropagation(); onRemove(component.id); }}
+          className="no-drag"
           style={{
             background: 'none',
             border: 'none',
-            color: 'rgba(255,255,255,0.5)',
+            color: 'rgba(255,255,255,0.4)',
             cursor: 'pointer',
-            fontSize: 16,
+            fontSize: 18,
             padding: '0 4px',
+            lineHeight: 1,
           }}
         >
           ×
         </button>
       </div>
       
-      {/* Content placeholder */}
+      {/* Content */}
       <div style={{ 
         flex: 1, 
         display: 'flex', 
         alignItems: 'center', 
         justifyContent: 'center',
-        color: 'rgba(255,255,255,0.3)',
-        fontSize: 11,
+        overflow: 'hidden',
       }}>
-        {component.w}×{component.h}
+        {component.type === 'CHART' ? (
+          <CandlestickChart 
+            width={contentWidth}
+            height={contentHeight}
+            symbol={component.symbol || 'ES'}
+          />
+        ) : (
+          <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: 10 }}>
+            {COMPONENT_TYPES[component.type].name}
+          </span>
+        )}
       </div>
       
       {/* Resize handle */}
       <div
-        className="resize-handle"
+        className="resize-handle no-drag"
         onMouseDown={handleResizeMouseDown}
         style={{
           position: 'absolute',
           bottom: 0,
           right: 0,
-          width: 16,
-          height: 16,
+          width: 20,
+          height: 20,
           cursor: 'se-resize',
-          background: 'linear-gradient(135deg, transparent 50%, rgba(255,255,255,0.2) 50%)',
+          background: 'linear-gradient(135deg, transparent 50%, rgba(255,255,255,0.15) 50%)',
         }}
       />
     </div>
@@ -234,16 +286,17 @@ const GridComponent = ({
 const ComponentPalette = ({ onAdd }) => (
   <div style={{
     position: 'fixed',
-    top: 16,
-    right: 16,
-    backgroundColor: '#0d0d0d',
+    top: 10,
+    right: 10,
+    backgroundColor: 'rgba(13, 13, 13, 0.95)',
     border: '1px solid rgba(255,255,255,0.1)',
-    borderRadius: 8,
-    padding: 12,
+    borderRadius: 6,
+    padding: 10,
     zIndex: 1000,
+    backdropFilter: 'blur(10px)',
   }}>
-    <div style={{ color: '#fff', fontSize: 11, marginBottom: 8, fontWeight: 600 }}>
-      ADD COMPONENT
+    <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 9, marginBottom: 8, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1 }}>
+      Components
     </div>
     {Object.entries(COMPONENT_TYPES).map(([type, config]) => (
       <button
@@ -252,16 +305,19 @@ const ComponentPalette = ({ onAdd }) => (
         style={{
           display: 'block',
           width: '100%',
-          padding: '8px 12px',
-          marginBottom: 4,
+          padding: '6px 10px',
+          marginBottom: 3,
           backgroundColor: config.color,
-          border: '1px solid rgba(255,255,255,0.1)',
-          borderRadius: 4,
-          color: '#fff',
+          border: '1px solid rgba(255,255,255,0.08)',
+          borderRadius: 3,
+          color: 'rgba(255,255,255,0.8)',
           fontSize: 11,
           cursor: 'pointer',
           textAlign: 'left',
+          transition: 'all 0.15s ease',
         }}
+        onMouseEnter={(e) => e.target.style.borderColor = 'rgba(255,255,255,0.3)'}
+        onMouseLeave={(e) => e.target.style.borderColor = 'rgba(255,255,255,0.08)'}
       >
         {config.name}
       </button>
@@ -274,13 +330,43 @@ export default function TradingUI() {
   const [components, setComponents] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [idCounter, setIdCounter] = useState(0);
+  const [gridDimensions, setGridDimensions] = useState({ cols: 16, rows: 10, cellSize: 70 });
+
+  // Calculate grid size based on window
+  useEffect(() => {
+    const calculateGrid = () => {
+      const padding = 20;
+      const statusBarHeight = 30;
+      const availableWidth = window.innerWidth - padding * 2;
+      const availableHeight = window.innerHeight - statusBarHeight - padding;
+      
+      // Target cell size around 70-90px
+      const targetCellSize = 80;
+      
+      const cols = Math.floor((availableWidth + GAP) / (targetCellSize + GAP));
+      const rows = Math.floor((availableHeight + GAP) / (targetCellSize + GAP));
+      
+      // Recalculate cell size to fill space evenly
+      const cellSize = Math.floor((availableWidth - (cols - 1) * GAP) / cols);
+      
+      setGridDimensions({ cols, rows, cellSize });
+    };
+
+    calculateGrid();
+    window.addEventListener('resize', calculateGrid);
+    return () => window.removeEventListener('resize', calculateGrid);
+  }, []);
+
+  const { cols: gridCols, rows: gridRows, cellSize } = gridDimensions;
 
   const addComponent = (type) => {
     const config = COMPONENT_TYPES[type];
-    const position = findAvailablePosition(components, config.defaultW, config.defaultH);
+    const w = Math.min(config.defaultW, gridCols);
+    const h = Math.min(config.defaultH, gridRows);
+    const position = findAvailablePosition(components, w, h, gridCols, gridRows);
     
     if (!position) {
-      alert('No space available for this component');
+      alert('No space available');
       return;
     }
 
@@ -289,8 +375,9 @@ export default function TradingUI() {
       type,
       x: position.x,
       y: position.y,
-      w: config.defaultW,
-      h: config.defaultH,
+      w,
+      h,
+      symbol: type === 'CHART' ? 'ES' : undefined,
     };
 
     setComponents([...components, newComponent]);
@@ -320,6 +407,12 @@ export default function TradingUI() {
     }));
   };
 
+  const updateSymbol = (id, symbol) => {
+    setComponents(components.map(comp => 
+      comp.id === id ? { ...comp, symbol } : comp
+    ));
+  };
+
   const removeComponent = (id) => {
     setComponents(components.filter(comp => comp.id !== id));
     if (selectedId === id) setSelectedId(null);
@@ -331,6 +424,9 @@ export default function TradingUI() {
     }
   };
 
+  const gridWidth = gridCols * (cellSize + GAP) - GAP;
+  const gridHeight = gridRows * (cellSize + GAP) - GAP;
+
   return (
     <div style={{
       width: '100vw',
@@ -338,26 +434,28 @@ export default function TradingUI() {
       backgroundColor: '#000',
       overflow: 'hidden',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      display: 'flex',
+      flexDirection: 'column',
     }}>
       {/* Grid container */}
       <div
         onClick={handleBackgroundClick}
         style={{
+          flex: 1,
           position: 'relative',
-          width: GRID_COLS * (CELL_SIZE + GAP) - GAP,
-          height: GRID_ROWS * (CELL_SIZE + GAP) - GAP,
-          margin: '20px auto',
+          width: gridWidth,
+          height: gridHeight,
+          margin: '10px auto',
         }}
       >
         {/* Grid cells */}
-        {Array.from({ length: GRID_ROWS }).map((_, y) =>
-          Array.from({ length: GRID_COLS }).map((_, x) => (
+        {Array.from({ length: gridRows }).map((_, y) =>
+          Array.from({ length: gridCols }).map((_, x) => (
             <GridCell
               key={`${x}-${y}`}
               x={x}
               y={y}
-              onDrop={() => {}}
-              isHighlighted={false}
+              cellSize={cellSize}
             />
           ))
         )}
@@ -370,8 +468,12 @@ export default function TradingUI() {
             onMove={moveComponent}
             onResize={resizeComponent}
             onRemove={removeComponent}
+            onUpdateSymbol={updateSymbol}
             isSelected={selectedId === comp.id}
             onSelect={setSelectedId}
+            gridCols={gridCols}
+            gridRows={gridRows}
+            cellSize={cellSize}
           />
         ))}
       </div>
@@ -381,21 +483,21 @@ export default function TradingUI() {
 
       {/* Status bar */}
       <div style={{
-        position: 'fixed',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        padding: '8px 16px',
-        backgroundColor: '#0d0d0d',
-        borderTop: '1px solid rgba(255,255,255,0.1)',
-        color: 'rgba(255,255,255,0.5)',
-        fontSize: 11,
+        padding: '6px 16px',
+        backgroundColor: '#0a0a0a',
+        borderTop: '1px solid rgba(255,255,255,0.08)',
+        color: 'rgba(255,255,255,0.4)',
+        fontSize: 10,
         display: 'flex',
         justifyContent: 'space-between',
       }}>
         <span>Components: {components.length}</span>
-        <span>Grid: {GRID_COLS}×{GRID_ROWS}</span>
-        <span>{selectedId !== null ? `Selected: ${COMPONENT_TYPES[components.find(c => c.id === selectedId)?.type]?.name || 'None'}` : 'Click component to select'}</span>
+        <span>Grid: {gridCols}×{gridRows}</span>
+        <span>
+          {selectedId !== null 
+            ? `Selected: ${components.find(c => c.id === selectedId)?.symbol || COMPONENT_TYPES[components.find(c => c.id === selectedId)?.type]?.name || 'None'}` 
+            : 'Click to select'}
+        </span>
       </div>
     </div>
   );
