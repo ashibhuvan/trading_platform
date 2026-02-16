@@ -22,6 +22,7 @@ Author: Interview Demo
 import asyncio
 import argparse
 import logging
+import os
 import signal
 from typing import Optional
 from datetime import datetime
@@ -29,6 +30,7 @@ from datetime import datetime
 # Local imports
 from models import Tick, Vendor, TickType, current_time_ns
 from feed_manager import FeedManager, FeedConfig
+from redis_publisher import PublisherConfig
 
 # Configure logging
 logging.basicConfig(
@@ -151,12 +153,14 @@ class MarketDataApp:
         # Create persister
         self._persister = TickPersister()
         
-        # Create feed manager
+        # Create feed manager (enable Redis when REDIS_HOST is set)
+        redis_config = PublisherConfig() if os.environ.get("REDIS_HOST") else None
         self._manager = FeedManager(
             on_batch=self._persister.process_batch,
             buffer_size=131072,  # 128K ticks
             batch_size=5000,
             flush_interval_ms=50,
+            redis_config=redis_config,
         )
         
         # Enable aggregation if requested
@@ -295,11 +299,16 @@ async def main() -> None:
         # Parse vendor/symbol args
         vendors = [Vendor(v.strip()) for v in args.vendors.split(",")]
         symbols = [s.strip() for s in args.symbols.split(",")]
-        
-        configs = [
-            FeedConfig(vendor=v, symbols=symbols)
-            for v in vendors
-        ]
+
+        configs = []
+        for v in vendors:
+            cfg = FeedConfig(vendor=v, symbols=symbols)
+            # Pull Databento settings from env when available
+            if v == Vendor.DATABENTO:
+                cfg.api_key = os.environ.get("DATABENTO_API_KEY", cfg.api_key)
+                cfg.host = os.environ.get("DATABENTO_HOST", cfg.host)
+                cfg.dataset = os.environ.get("DATABENTO_DATASET", cfg.dataset)
+            configs.append(cfg)
     
     # Run application
     app = MarketDataApp()

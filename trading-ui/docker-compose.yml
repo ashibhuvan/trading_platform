@@ -1,4 +1,5 @@
-version: '3.8'
+# Moved to root docker-compose.yml — use `docker compose up` from project root.
+# This file is kept to avoid breaking existing workflows.
 
 services:
   trading-ui:
@@ -8,16 +9,3 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - WS_ENDPOINT=ws://price-feed:8080/feed
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # Placeholder for future price feed service
-  # price-feed:
-  #   build: ../price-feed-service
-  #   ports:
-  #     - "8080:8080"

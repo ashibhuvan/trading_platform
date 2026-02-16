@@ -1,0 +1,65 @@
+services:
+  # ── Redis ───────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ── Python feed handler (Databento → Redis) ────────────────
+  feed-handler:
+    build: ./feed_handler
+    command: ["--vendors", "databento", "--symbols", "${SYMBOLS:-ESZ4,NQZ4}"]
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_CHANNEL_PREFIX=trading
+      - PUBLISH_BATCH_SIZE=100
+      - PUBLISH_FLUSH_MS=10
+      - DATABENTO_API_KEY=${DATABENTO_API_KEY}
+      - DATABENTO_HOST=${DATABENTO_HOST:-live.databento.com}
+      - DATABENTO_DATASET=${DATABENTO_DATASET:-GLBX.MDP3}
+
+  # ── Node price-feed bridge (Redis → WebSocket) ─────────────
+  price-feed:
+    build:
+      context: ./trading-ui
+      dockerfile: Dockerfile.feed
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_CHANNEL_PREFIX=trading
+      - WS_PORT=8080
+
+  # ── React trading UI ───────────────────────────────────────
+  trading-ui:
+    build: ./trading-ui
+    restart: unless-stopped
+    depends_on:
+      - price-feed
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - WS_ENDPOINT=ws://price-feed:8080
+
+volumes:
+  redis-data:
