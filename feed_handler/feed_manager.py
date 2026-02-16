@@ -16,6 +16,7 @@ import logging
 from models import Tick, Vendor, SubscriptionRequest, FeedStats, current_time_ns
 from base_handler import FeedHandler, TickCallback
 from tick_buffer import TickBuffer, TickAggregator
+from redis_publisher import RedisPublisher, PublisherConfig
 
 # Import handlers
 import sys
@@ -104,26 +105,29 @@ class FeedManager:
         buffer_size: int = 65536,
         batch_size: int = 1000,
         flush_interval_ms: int = 100,
+        redis_config: Optional[PublisherConfig] = None,
     ):
         """
         Initialize FeedManager.
-        
+
         Args:
             on_tick: Callback for individual ticks (low-level)
             on_batch: Callback for tick batches (recommended for throughput)
             buffer_size: Ring buffer capacity
             batch_size: Ticks per batch
             flush_interval_ms: Max time between batch flushes
+            redis_config: Redis publisher config. Pass PublisherConfig() to
+                          enable Redis pub/sub, or None to disable.
         """
         self._on_tick = on_tick
         self._on_batch = on_batch
-        
+
         # Handler registry
         self._handlers: dict[Vendor, FeedHandler] = {}
         self._handler_tasks: dict[Vendor, asyncio.Task] = {}
         self._configs: dict[Vendor, FeedConfig] = {}
         self._states: dict[Vendor, FeedState] = {}
-        
+
         # Tick buffer for batching
         self._buffer: Optional[TickBuffer] = None
         if on_batch:
@@ -133,14 +137,19 @@ class FeedManager:
                 flush_interval_ms=flush_interval_ms,
                 buffer_capacity=buffer_size,
             )
-        
+
         # Aggregator for OHLCV
         self._aggregator: Optional[TickAggregator] = None
-        
+
+        # Redis publisher
+        self._redis_publisher: Optional[RedisPublisher] = None
+        if redis_config is not None:
+            self._redis_publisher = RedisPublisher(redis_config)
+
         # Global stats
         self._total_ticks = 0
         self._start_time = 0
-        
+
         self._running = False
     
     def _create_handler(self, config: FeedConfig) -> FeedHandler:
@@ -176,17 +185,21 @@ class FeedManager:
             raise ValueError(f"Unsupported vendor: {config.vendor}")
     
     async def _handle_tick(self, tick: Tick) -> None:
-        """Central tick handler - routes ticks to buffer/callbacks."""
+        """Central tick handler - routes ticks to buffer/callbacks/Redis."""
         self._total_ticks += 1
-        
+
         # Route to buffer for batching
         if self._buffer:
             await self._buffer.push(tick)
-        
+
         # Route to individual tick callback
         if self._on_tick:
             await self._on_tick(tick)
-        
+
+        # Publish to Redis
+        if self._redis_publisher and self._redis_publisher.connected:
+            await self._redis_publisher.publish_tick(tick)
+
         # Route to aggregator
         if self._aggregator:
             await self._aggregator.process_tick(tick)
@@ -204,15 +217,24 @@ class FeedManager:
         """Start all configured feeds."""
         self._running = True
         self._start_time = current_time_ns()
-        
+
+        # Start Redis publisher
+        if self._redis_publisher:
+            await self._redis_publisher.start()
+
         # Start buffer
         if self._buffer:
             await self._buffer.start()
-        
+
         # Start each feed
         for vendor, config in self._configs.items():
             if config.enabled:
                 await self._start_feed(vendor)
+
+        # Update Redis with connected feed names
+        if self._redis_publisher:
+            feed_names = [v.value for v, h in self._handlers.items() if h.is_connected]
+            self._redis_publisher.set_connected_feeds(feed_names)
     
     async def _start_feed(self, vendor: Vendor) -> None:
         """Start a single feed."""
@@ -268,11 +290,15 @@ class FeedManager:
         # Stop buffer
         if self._buffer:
             await self._buffer.stop()
-        
+
         # Flush aggregator
         if self._aggregator:
             await self._aggregator.flush_all()
-        
+
+        # Stop Redis publisher
+        if self._redis_publisher:
+            await self._redis_publisher.stop()
+
         logger.info("All feeds stopped")
     
     async def subscribe(self, vendor: Vendor, symbols: list[str]) -> None:
@@ -353,9 +379,17 @@ class FeedManager:
         on_bar: Optional[Callable] = None,
     ) -> None:
         """Enable real-time OHLCV aggregation."""
+        async def _on_bar_with_redis(bar: TickAggregator.Bar) -> None:
+            # Publish completed bar to Redis
+            if self._redis_publisher and self._redis_publisher.connected:
+                await self._redis_publisher.publish_bar(bar)
+            # Forward to caller-supplied callback
+            if on_bar:
+                await on_bar(bar)
+
         self._aggregator = TickAggregator(
             timeframe_seconds=timeframe_seconds,
-            on_bar=on_bar,
+            on_bar=_on_bar_with_redis,
         )
 
 

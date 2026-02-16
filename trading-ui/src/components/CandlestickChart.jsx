@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import usePriceFeed from '../hooks/usePriceFeed';
 
 /**
  * Candlestick Chart Component
- * 
+ *
  * Features:
  * - Candlestick rendering (OHLCV)
  * - Volume bars
@@ -11,6 +12,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
  * - Pan (click + drag)
  * - Auto-scale Y axis
  * - Current price line
+ * - Live data via Redis → WebSocket when useLiveData=true
  */
 
 // Generate mock OHLCV data
@@ -57,7 +59,7 @@ const formatDate = (timestamp) => {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
-const CandlestickChart = ({ width = 600, height = 400, symbol = 'ES' }) => {
+const CandlestickChart = ({ width = 600, height = 400, symbol = 'ES', useLiveData = false }) => {
   const canvasRef = useRef(null);
   const [data, setData] = useState([]);
   const [viewState, setViewState] = useState({
@@ -67,6 +69,10 @@ const CandlestickChart = ({ width = 600, height = 400, symbol = 'ES' }) => {
   const [crosshair, setCrosshair] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, index: 0 });
+
+  // Live data hook (only active when useLiveData is true)
+  const symbols = useLiveData ? [symbol] : [];
+  const { ticks, bars, connected } = usePriceFeed(symbols);
 
   // Chart layout
   const PADDING = { top: 20, right: 70, bottom: 50, left: 10 };
@@ -86,34 +92,85 @@ const CandlestickChart = ({ width = 600, height = 400, symbol = 'ES' }) => {
     currentPrice: '#2196f3',
   };
 
-  // Initialize data
+  // Initialize data — mock when not live
   useEffect(() => {
-    setData(generateMockData(200));
-  }, []);
+    if (!useLiveData) {
+      setData(generateMockData(200));
+    }
+  }, [useLiveData]);
 
-  // Simulate live updates
+  // Mock live updates — only when NOT using real live data
   useEffect(() => {
+    if (useLiveData) return;
+
     const interval = setInterval(() => {
       setData(prev => {
         if (prev.length === 0) return prev;
-        
+
         const newData = [...prev];
         const last = { ...newData[newData.length - 1] };
-        
+
         // Random price movement
         const change = last.close * 0.0005 * (Math.random() - 0.5) * 2;
         last.close = Math.round((last.close + change) * 100) / 100;
         last.high = Math.max(last.high, last.close);
         last.low = Math.min(last.low, last.close);
         last.volume += Math.floor(Math.random() * 50);
-        
+
         newData[newData.length - 1] = last;
         return newData;
       });
     }, 500);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [useLiveData]);
+
+  // ── Live tick updates: update the latest bar's close/high/low ──
+  useEffect(() => {
+    if (!useLiveData) return;
+    const tick = ticks[symbol];
+    if (!tick || tick.last == null) return;
+
+    setData(prev => {
+      if (prev.length === 0) return prev;
+      const newData = [...prev];
+      const last = { ...newData[newData.length - 1] };
+      last.close = tick.last;
+      last.high = Math.max(last.high, tick.last);
+      last.low = Math.min(last.low, tick.last);
+      last.volume += tick.volume || 0;
+      newData[newData.length - 1] = last;
+      return newData;
+    });
+  }, [useLiveData, ticks, symbol]);
+
+  // ── Live bar updates: append completed bars ──
+  useEffect(() => {
+    if (!useLiveData) return;
+    const liveBars = bars[symbol];
+    if (!liveBars || liveBars.length === 0) return;
+
+    // Take only the latest bar received
+    const latest = liveBars[liveBars.length - 1];
+
+    setData(prev => {
+      const newBar = {
+        time: latest.ts,
+        open: latest.o,
+        high: latest.h,
+        low: latest.l,
+        close: latest.c,
+        volume: latest.v,
+      };
+
+      // Avoid duplicating the same bar timestamp
+      if (prev.length > 0 && prev[prev.length - 1].time === newBar.time) {
+        return prev;
+      }
+
+      return [...prev, newBar];
+    });
+  }, [useLiveData, bars, symbol]);
 
   // Calculate visible data range
   const getVisibleData = useCallback(() => {
@@ -400,6 +457,30 @@ const CandlestickChart = ({ width = 600, height = 400, symbol = 'ES' }) => {
         onWheel={handleWheel}
       />
       
+      {/* Live status indicator */}
+      {useLiveData && (
+        <div style={{
+          position: 'absolute',
+          top: 6,
+          left: 80,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
+          fontSize: 10,
+          fontFamily: 'monospace',
+          color: connected ? '#00c853' : '#ff1744',
+        }}>
+          <span style={{
+            width: 6,
+            height: 6,
+            borderRadius: '50%',
+            background: connected ? '#00c853' : '#ff1744',
+            display: 'inline-block',
+          }} />
+          {connected ? 'LIVE' : 'DISCONNECTED'}
+        </div>
+      )}
+
       {/* Controls */}
       <div style={{
         position: 'absolute',
