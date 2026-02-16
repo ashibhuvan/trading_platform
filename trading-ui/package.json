@@ -6,12 +6,15 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "node server.js"
+    "start": "node server.js",
+    "feed": "node price-feed-service.js"
   },
   "dependencies": {
     "express": "^4.18.2",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "redis": "^4.6.12",
+    "ws": "^8.16.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.1",

@@ -1,0 +1,13 @@
+# Price feed service — Redis subscriber → WebSocket bridge
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package.json ./
+RUN npm install --omit=dev
+
+COPY price-feed-service.js ./
+
+EXPOSE 8080
+
+CMD ["node", "price-feed-service.js"]
